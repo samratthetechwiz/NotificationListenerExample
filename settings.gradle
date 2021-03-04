@@ -1,2 +1,3 @@
+include ':NotificationCategoryLibrary'
 include ':app'
 rootProject.name = "Notification Listener Example"
