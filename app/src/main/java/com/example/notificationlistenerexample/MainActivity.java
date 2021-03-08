@@ -24,8 +24,15 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,8 +47,11 @@ public class MainActivity extends AppCompatActivity {
     private Button sendNotiButton;
     private Button processNotiButton;
     public NotiClassify notiClassify;
-    String[] timeWords = {"AM","PM","am","pm","o'clock","Am","Pm","minutes"};
-    String regex = "(?:(?:([01]?\\d|2[0-3]):)?([0-5]?\\d):)?([0-5]?\\d)";
+    public Properties prop = null;
+    public Set<Object> keys = null;
+    public InputStream is = null;
+    public HashMap<String, String> categories = new HashMap<String, String>();
+    public String category = null;
 
     private boolean runningQOrLater =
             android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q;
@@ -61,6 +71,18 @@ public class MainActivity extends AppCompatActivity {
         sendNotiButton = findViewById(R.id.sendNotiButton);
         processNotiButton = findViewById(R.id.processEditTextButton);
 
+        try {
+            is = getBaseContext().getAssets().open("category.properties");
+            keys = getPropAllKeys();
+            for(Object k:keys){
+                String key = (String)k;
+                String property = prop.getProperty(key);
+                categories.put(key, property);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
         /*Intent intent = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
         startActivity(intent);
 
@@ -70,12 +92,12 @@ public class MainActivity extends AppCompatActivity {
                 NLService.class);
         startService(intent);*/
 
-        sendNotiButton.setOnClickListener(new View.OnClickListener() {
+        /*sendNotiButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                showNotification("Hello Everyone");
             }
-        });
+        });*/
 
         processNotiButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -84,40 +106,22 @@ public class MainActivity extends AppCompatActivity {
                 String randomText = randomString.getText().toString();
                 notificationTextView.setText(msg + "\n" + randomText + "\n");
 
-                StringTokenizer stringTokenizer = new StringTokenizer(randomText);
-                boolean hasNumber = false;
-                boolean relatedToTime = false;
+                notiClassify = new NotiClassify(randomText, categories);
+                boolean trackable = notiClassify.checkTraceable();
 
-                while (stringTokenizer.hasMoreTokens()) {
-                    Log.d(TAG, "Checking Tokens");
-                    String temp = stringTokenizer.nextToken();
-                    boolean trackCase1 = temp.matches(regex);
-                    if(trackCase1){
-                        hasNumber = true;
-                        int matches[] = printMatches(randomText,regex);
-                        if(matches[1] > 0) {
-                            String checkForTime = randomText.substring(matches[1]);
-                            boolean trackCase2 = stringContainsItemFromList(checkForTime, timeWords);
-                            if (trackCase2)
-                                relatedToTime = true;
-                            String checkForColon = randomText.substring(matches[0],matches[1]);
-                            if(checkForColon.contains(":") &&
-                                    isTimeStampValid(randomText.substring(matches[0],matches[1]))) {
-                                relatedToTime = true;
-                            }
-                        }
-                    }
-                    Log.d(TAG, String.valueOf(trackCase1));
-                }
-                if(hasNumber && relatedToTime) {
+                if(trackable){
                     Toast.makeText(getApplicationContext(), "Notification is Trackable", Toast.LENGTH_LONG).show();
                     msg = notificationTextView.getText().toString();
-                    notificationTextView.setText(msg + "It is TRACKABLE");
-                    Log.d(TAG,"NOTI IS Trackable");
+                    notificationTextView.setText(msg + "It is TRACKABLE" + "\n");
+                    category = notiClassify.getCategory();
+                    if(category != null) {
+                        msg = notificationTextView.getText().toString();
+                        notificationTextView.setText(msg + "Category : " + category + "\n");
+                        category = null;
+                    }
                 }else{
                     msg = notificationTextView.getText().toString();
-                    notificationTextView.setText(msg + "It is NOT TRACKABLE");
-                    Log.d(TAG,"NOTI IS NOT Trackable");
+                    notificationTextView.setText(msg + "It is NOT TRACKABLE" + "\n");
                 }
             }
         });
@@ -128,51 +132,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         //unregisterReceiver(notificationReceiver);
-    }
-
-    public static boolean stringContainsItemFromList(String inputStr, String[] items) {
-        for(int i =0; i < items.length; i++) {
-            if(inputStr.contains(items[i])) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public static int[] printMatches(String text, String regex) {
-        Pattern pattern = Pattern.compile(regex);
-        Matcher matcher = pattern.matcher(text);
-        int pos[] = {-999,-999};
-        // Check all occurrences
-        while (matcher.find()) {
-            Log.d(TAG,"Start index: " + matcher.start());
-            Log.d(TAG," End index: " + matcher.end());
-            Log.d(TAG," Found: " + matcher.group());
-            pos[0] = matcher.start();
-            pos[1] = matcher.end();
-        }
-        return pos;
-    }
-
-    public static boolean isTimeStampValid(String inputString) {
-        int length = inputString.length();
-        SimpleDateFormat format;
-
-        if(length < 6) {
-            format = new SimpleDateFormat("HH:mm");
-            Log.d(TAG,"HH:mm format");
-        }
-        else {
-            format = new SimpleDateFormat("HH:mm:ss");
-            Log.d(TAG,"HH:mm:ss format");
-        }
-        try{
-            format.parse(inputString);
-            return true;
-        }
-        catch(ParseException e) {
-            return false;
-        }
     }
 
     private void showNotification(String message){
@@ -200,6 +159,21 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         notificationManager.notify(1,builder.build());
+    }
+
+    public Set<Object> getPropAllKeys(){
+        Set<Object> keys = null;
+        try {
+            this.prop = new Properties();
+            prop.load(is);
+            keys = prop.keySet();
+            return keys;
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return keys;
     }
 
     class NotificationReceiver extends BroadcastReceiver{
